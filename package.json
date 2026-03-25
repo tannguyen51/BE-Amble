@@ -2,11 +2,11 @@
   "name": "be",
   "version": "1.0.0",
   "description": "Amble App Backend API",
-  "main": "server.js",
+  "main": "app.js",
   "scripts": {
-    "start": "nodemon ./bin/www",
+    "start": "node ./bin/www",
     "seed": "node seed.js",
-    "dev": "nodemon server.js",
+    "dev": "nodemon ./bin/www",
     "set:reward:6000": "node scripts/set-reward-6000.js"
   },
   "dependencies": {
