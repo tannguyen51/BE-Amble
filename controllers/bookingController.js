@@ -83,6 +83,20 @@ exports.createBooking = async (req, res) => {
         .json({ success: false, message: "Thiếu thông tin bắt buộc" });
     }
 
+    const VALID_PAYMENT_METHODS = [
+      "momo",
+      "zalopay",
+      "bank",
+      "credit",
+      "apple",
+    ];
+    if (paymentMethod && !VALID_PAYMENT_METHODS.includes(paymentMethod)) {
+      return res.status(400).json({
+        success: false,
+        message: "Phương thức thanh toán không hợp lệ",
+      });
+    }
+
     const restaurant = await Restaurant.findById(restaurantId);
     if (!restaurant)
       return res
@@ -213,6 +227,14 @@ exports.createBooking = async (req, res) => {
     });
   } catch (err) {
     console.error("[createBooking]", err);
+
+    if (err?.name === "ValidationError" || err?.name === "CastError") {
+      return res.status(400).json({
+        success: false,
+        message: err.message || "Dữ liệu đặt bàn không hợp lệ",
+      });
+    }
+
     return res.status(500).json({ success: false, message: "Lỗi server" });
   }
 };
@@ -241,7 +263,7 @@ exports.confirmBooking = async (req, res) => {
 exports.processPayment = async (req, res) => {
   try {
     const { method } = req.body;
-    const VALID = ["momo", "zalopay", "bank", "credit"];
+    const VALID = ["momo", "zalopay", "bank", "credit", "apple"];
     if (!method || !VALID.includes(method)) {
       return res.status(400).json({
         success: false,

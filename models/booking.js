@@ -47,7 +47,7 @@ const bookingSchema = new mongoose.Schema(
       transactionId: String,
       method: {
         type: String,
-        enum: ["momo", "bank", "credit", "apple"],
+        enum: ["momo", "zalopay", "bank", "credit", "apple"],
       },
       paidAt: Date,
     },
