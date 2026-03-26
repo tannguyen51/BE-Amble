@@ -2,6 +2,15 @@ const Booking = require("../models/booking");
 const Table = require("../models/table");
 const Restaurant = require("../models/restaurant");
 const Voucher = require("../models/voucher");
+const User = require("../models/user");
+
+const REWARD_POINT_DIVISOR = 1000;
+
+function calculateRewardPoints(amount) {
+  const safeAmount = Number(amount || 0);
+  if (!Number.isFinite(safeAmount) || safeAmount <= 0) return 0;
+  return Math.floor(safeAmount / REWARD_POINT_DIVISOR);
+}
 
 // ── GET /api/booking/vouchers ────────────────────────────
 exports.getBookingVouchers = async (req, res) => {
@@ -286,7 +295,45 @@ exports.processPayment = async (req, res) => {
     booking.payment = { transactionId, method, paidAt: new Date() };
     await booking.save();
 
-    return res.json({ success: true, booking, transactionId });
+    const pointsToAward = calculateRewardPoints(booking.pricing?.totalAmount);
+    if (pointsToAward > 0) {
+      const rewardMarkedBooking = await Booking.findOneAndUpdate(
+        {
+          _id: booking._id,
+          $or: [{ rewardProcessedAt: { $exists: false } }, { rewardProcessedAt: null }],
+        },
+        {
+          $set: {
+            rewardProcessedAt: new Date(),
+            rewardPointsAwarded: pointsToAward,
+          },
+        },
+        { new: true },
+      );
+
+      if (rewardMarkedBooking) {
+        await User.findByIdAndUpdate(booking.userId, {
+          $inc: { rewardPoints: pointsToAward },
+          $push: {
+            rewardHistory: {
+              title: `Tich diem tu booking ${booking.bookingNumber}`,
+              points: pointsToAward,
+              type: "earn",
+              createdAt: new Date(),
+            },
+          },
+        });
+        booking.rewardProcessedAt = rewardMarkedBooking.rewardProcessedAt;
+        booking.rewardPointsAwarded = rewardMarkedBooking.rewardPointsAwarded;
+      }
+    }
+
+    return res.json({
+      success: true,
+      booking,
+      transactionId,
+      rewardedPoints: booking.rewardPointsAwarded || 0,
+    });
   } catch (err) {
     console.error("[processPayment]", err);
     return res.status(500).json({ success: false, message: "Lỗi server" });

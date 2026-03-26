@@ -53,6 +53,12 @@ const bookingSchema = new mongoose.Schema(
     },
     conversationSessionId: String,
     confirmedAt: Date,
+    rewardProcessedAt: Date,
+    rewardPointsAwarded: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
     cancelledAt: Date,
     cancellationReason: String,
   },
