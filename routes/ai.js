@@ -5,6 +5,14 @@ const OR_URL = "https://openrouter.ai/api/v1/chat/completions";
 const GEMINI_API_URL =
   "https://generativelanguage.googleapis.com/v1beta/models";
 
+const doFetch =
+  typeof globalThis.fetch === "function"
+    ? globalThis.fetch.bind(globalThis)
+    : async (...args) => {
+        const { default: nodeFetch } = await import("node-fetch");
+        return nodeFetch(...args);
+      };
+
 const MODEL_CANDIDATES = (
   process.env.AI_MODELS ||
   "google/gemini-2.5-flash,openai/gpt-4o-mini,anthropic/claude-3.5-haiku"
@@ -55,7 +63,7 @@ async function callAI(apiKey, messages, systemPrompt, retries = 2) {
     for (let attempt = 1; attempt <= retries; attempt++) {
       let response;
       try {
-        response = await fetch(OR_URL, {
+        response = await doFetch(OR_URL, {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
@@ -159,7 +167,7 @@ async function callGemini(geminiKey, messages, systemPrompt) {
 
     let response;
     try {
-      response = await fetch(url, {
+      response = await doFetch(url, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(body),
