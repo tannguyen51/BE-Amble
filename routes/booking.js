@@ -16,6 +16,7 @@ router.post("/create", bookingController.createBooking);
 router.put("/:bookingId/confirm", bookingController.confirmBooking);
 router.post("/:bookingId/payment", bookingController.processPayment);
 router.delete("/:bookingId/cancel", bookingController.cancelBooking); // ← mới
+router.post("/:bookingId/cancel", bookingController.cancelBooking); // fallback cho client không gọi DELETE
 router.get("/user/:userId", bookingController.getUserBookings);
 router.get("/:bookingId", bookingController.getBookingById);
 

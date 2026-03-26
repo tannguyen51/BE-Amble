@@ -333,7 +333,7 @@ exports.getBookingById = async (req, res) => {
 // ── DELETE /api/booking/:bookingId/cancel ─────────────────
 exports.cancelBooking = async (req, res) => {
   try {
-    const { reason } = req.body;
+    const reason = req.body?.reason;
     const booking = await Booking.findById(req.params.bookingId);
 
     if (!booking)
