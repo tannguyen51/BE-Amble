@@ -333,8 +333,21 @@ exports.getBookingById = async (req, res) => {
 // ── DELETE /api/booking/:bookingId/cancel ─────────────────
 exports.cancelBooking = async (req, res) => {
   try {
+    const bookingId =
+      req.params.bookingId ||
+      req.params.id ||
+      req.body?.bookingId ||
+      req.query?.bookingId;
+
+    if (!bookingId) {
+      return res.status(400).json({
+        success: false,
+        message: "Thiếu bookingId để hủy booking",
+      });
+    }
+
     const reason = req.body?.reason;
-    const booking = await Booking.findById(req.params.bookingId);
+    const booking = await Booking.findById(bookingId);
 
     if (!booking)
       return res

@@ -17,6 +17,10 @@ router.put("/:bookingId/confirm", bookingController.confirmBooking);
 router.post("/:bookingId/payment", bookingController.processPayment);
 router.delete("/:bookingId/cancel", bookingController.cancelBooking); // ← mới
 router.post("/:bookingId/cancel", bookingController.cancelBooking); // fallback cho client không gọi DELETE
+router.put("/:bookingId/cancel", bookingController.cancelBooking); // fallback cho client dùng PUT
+router.patch("/:bookingId/cancel", bookingController.cancelBooking); // fallback cho client dùng PATCH
+router.post("/cancel/:bookingId", bookingController.cancelBooking); // fallback URL pattern khác
+router.post("/cancel", bookingController.cancelBooking); // fallback nhận bookingId từ body/query
 router.get("/user/:userId", bookingController.getUserBookings);
 router.get("/:bookingId", bookingController.getBookingById);
 
