@@ -2,6 +2,8 @@ const express = require("express");
 const router = express.Router();
 
 const OR_URL = "https://openrouter.ai/api/v1/chat/completions";
+const GEMINI_API_URL =
+  "https://generativelanguage.googleapis.com/v1beta/models";
 
 const MODEL_CANDIDATES = (
   process.env.AI_MODELS ||
@@ -14,10 +16,22 @@ const MODEL_CANDIDATES = (
 function getAIKey() {
   return (
     process.env.OPENROUTER_API_KEY ||
+    process.env.OPEN_ROUTER_API_KEY ||
     process.env.AI_API_KEY ||
-    process.env.GEMINI_API_KEY ||
     ""
   );
+}
+
+function getGeminiKey() {
+  return process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY || "";
+}
+
+function looksLikeOpenRouterKey(key = "") {
+  return key.startsWith("sk-or-");
+}
+
+function looksLikeGeminiKey(key = "") {
+  return key.startsWith("AIza");
 }
 
 async function callAI(apiKey, messages, systemPrompt, retries = 2) {
@@ -106,29 +120,185 @@ async function callAI(apiKey, messages, systemPrompt, retries = 2) {
   return lastError;
 }
 
+function toGeminiContents(messages) {
+  return messages.map((m) => ({
+    role: m.role === "assistant" ? "model" : "user",
+    parts: [{ text: String(m.content || "") }],
+  }));
+}
+
+async function callGemini(geminiKey, messages, systemPrompt) {
+  const modelCandidates = (
+    process.env.GEMINI_MODELS || "gemini-2.0-flash,gemini-1.5-flash"
+  )
+    .split(",")
+    .map((m) => m.trim())
+    .filter(Boolean);
+
+  let lastError = {
+    ok: false,
+    status: 502,
+    error: { message: "Unknown Gemini upstream error" },
+  };
+
+  const contents = toGeminiContents(messages);
+
+  for (const model of modelCandidates) {
+    const url = `${GEMINI_API_URL}/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(geminiKey)}`;
+    const body = {
+      contents,
+      generationConfig: {
+        temperature: 0.7,
+        maxOutputTokens: 1000,
+      },
+    };
+
+    if (systemPrompt) {
+      body.systemInstruction = { parts: [{ text: systemPrompt }] };
+    }
+
+    let response;
+    try {
+      response = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+    } catch (fetchErr) {
+      lastError = {
+        ok: false,
+        status: 503,
+        error: { message: "Network: " + fetchErr.message },
+      };
+      continue;
+    }
+
+    const rawText = await response.text();
+    console.log(
+      `[AI][Gemini] model=${model} status=${response.status} body=${rawText.slice(0, 400)}`,
+    );
+
+    if (!response.ok) {
+      let errData = {};
+      try {
+        errData = JSON.parse(rawText);
+      } catch {
+        errData = { message: rawText?.slice(0, 200) || "Unknown error" };
+      }
+      lastError = { ok: false, status: response.status, error: errData };
+      continue;
+    }
+
+    try {
+      const data = JSON.parse(rawText);
+      const text =
+        data?.candidates?.[0]?.content?.parts
+          ?.map((p) => p?.text || "")
+          .join("\n")
+          .trim() || "";
+
+      if (!text) {
+        lastError = {
+          ok: false,
+          status: 500,
+          error: { message: "Empty Gemini response" },
+        };
+        continue;
+      }
+
+      return { ok: true, text, model: `google/${model}` };
+    } catch {
+      lastError = {
+        ok: false,
+        status: 500,
+        error: { message: "Invalid JSON from Gemini" },
+      };
+    }
+  }
+
+  return lastError;
+}
+
+async function callAIWithFallback(messages, systemPrompt) {
+  const openRouterKey = getAIKey();
+  const geminiKey = getGeminiKey();
+
+  const canUseOpenRouter =
+    !!openRouterKey && looksLikeOpenRouterKey(openRouterKey);
+  const canUseGemini = !!geminiKey && looksLikeGeminiKey(geminiKey);
+
+  if (canUseOpenRouter) {
+    const orResult = await callAI(
+      openRouterKey,
+      messages,
+      systemPrompt || null,
+    );
+    if (orResult.ok) return orResult;
+
+    if (
+      canUseGemini &&
+      (orResult.status === 401 ||
+        orResult.status === 403 ||
+        orResult.status >= 500)
+    ) {
+      console.warn("[AI] OpenRouter failed, falling back to Gemini direct");
+      const geminiResult = await callGemini(
+        geminiKey,
+        messages,
+        systemPrompt || null,
+      );
+      if (geminiResult.ok) return geminiResult;
+      return geminiResult;
+    }
+
+    return orResult;
+  }
+
+  if (canUseGemini) {
+    return callGemini(geminiKey, messages, systemPrompt || null);
+  }
+
+  if (openRouterKey) {
+    // Key exists nhưng format không khớp; vẫn thử OpenRouter lần cuối.
+    return callAI(openRouterKey, messages, systemPrompt || null);
+  }
+
+  return {
+    ok: false,
+    status: 500,
+    error: {
+      message:
+        "AI service not configured. Set OPENROUTER_API_KEY (sk-or-...) or GEMINI_API_KEY (AIza...).",
+    },
+  };
+}
+
 // ── GET /api/ai/test ──────────────────────────────────────
 // Mở trình duyệt: http://localhost:5000/api/ai/test
 // Xem log BE để biết OpenRouter trả về gì
 router.get("/test", async (req, res) => {
-  const apiKey = getAIKey();
+  const openRouterKey = getAIKey();
+  const geminiKey = getGeminiKey();
   console.log(
-    "[AI/test] key =",
-    apiKey ? apiKey.slice(0, 15) + "..." : "MISSING",
+    "[AI/test] openrouter =",
+    openRouterKey ? openRouterKey.slice(0, 15) + "..." : "MISSING",
+  );
+  console.log(
+    "[AI/test] gemini =",
+    geminiKey ? geminiKey.slice(0, 8) + "..." : "MISSING",
   );
 
-  if (!apiKey) {
+  if (!openRouterKey && !geminiKey) {
     return res.json({
       ok: false,
       problem:
-        "OPENROUTER_API_KEY (hoặc AI_API_KEY/GEMINI_API_KEY) chưa set trong .env",
+        "Thiếu key AI. Set OPENROUTER_API_KEY (sk-or-...) hoặc GEMINI_API_KEY (AIza...).",
     });
   }
 
-  const result = await callAI(
-    apiKey,
+  const result = await callAIWithFallback(
     [{ role: "user", content: "Say OK only" }],
     null,
-    1,
   );
 
   if (result.ok) {
@@ -148,14 +318,15 @@ router.post("/chat", async (req, res) => {
         .json({ success: false, message: "messages required" });
     }
 
-    const apiKey = getAIKey();
-    if (!apiKey) {
+    const openRouterKey = getAIKey();
+    const geminiKey = getGeminiKey();
+    if (!openRouterKey && !geminiKey) {
       return res
         .status(500)
         .json({ success: false, message: "AI service not configured" });
     }
 
-    const result = await callAI(apiKey, messages, system || null);
+    const result = await callAIWithFallback(messages, system || null);
 
     if (!result.ok) {
       console.error(
