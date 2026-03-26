@@ -12,6 +12,43 @@ function calculateRewardPoints(amount) {
   return Math.floor(safeAmount / REWARD_POINT_DIVISOR);
 }
 
+async function awardRewardForBookingIfNeeded(booking) {
+  const pointsToAward = calculateRewardPoints(booking?.pricing?.totalAmount);
+  if (pointsToAward <= 0) return 0;
+
+  const rewardMarkedBooking = await Booking.findOneAndUpdate(
+    {
+      _id: booking._id,
+      $or: [{ rewardProcessedAt: { $exists: false } }, { rewardProcessedAt: null }],
+    },
+    {
+      $set: {
+        rewardProcessedAt: new Date(),
+        rewardPointsAwarded: pointsToAward,
+      },
+    },
+    { new: true },
+  );
+
+  if (!rewardMarkedBooking) return 0;
+
+  await User.findByIdAndUpdate(booking.userId, {
+    $inc: { rewardPoints: pointsToAward },
+    $push: {
+      rewardHistory: {
+        title: `Tich diem tu booking ${booking.bookingNumber}`,
+        points: pointsToAward,
+        type: "earn",
+        createdAt: new Date(),
+      },
+    },
+  });
+
+  booking.rewardProcessedAt = rewardMarkedBooking.rewardProcessedAt;
+  booking.rewardPointsAwarded = rewardMarkedBooking.rewardPointsAwarded;
+  return rewardMarkedBooking.rewardPointsAwarded || 0;
+}
+
 // ── GET /api/booking/vouchers ────────────────────────────
 exports.getBookingVouchers = async (req, res) => {
   try {
@@ -229,9 +266,12 @@ exports.createBooking = async (req, res) => {
       );
     }
 
+    const rewardedPoints = await awardRewardForBookingIfNeeded(booking);
+
     return res.json({
       success: true,
       booking,
+      rewardedPoints,
       message: "Yeu cau dat ban da duoc gui cho nha hang",
     });
   } catch (err) {
@@ -261,7 +301,9 @@ exports.confirmBooking = async (req, res) => {
     booking.confirmedAt = new Date();
     await booking.save();
 
-    return res.json({ success: true, booking });
+    const rewardedPoints = await awardRewardForBookingIfNeeded(booking);
+
+    return res.json({ success: true, booking, rewardedPoints });
   } catch (err) {
     console.error("[confirmBooking]", err);
     return res.status(500).json({ success: false, message: "Lỗi server" });
@@ -295,44 +337,13 @@ exports.processPayment = async (req, res) => {
     booking.payment = { transactionId, method, paidAt: new Date() };
     await booking.save();
 
-    const pointsToAward = calculateRewardPoints(booking.pricing?.totalAmount);
-    if (pointsToAward > 0) {
-      const rewardMarkedBooking = await Booking.findOneAndUpdate(
-        {
-          _id: booking._id,
-          $or: [{ rewardProcessedAt: { $exists: false } }, { rewardProcessedAt: null }],
-        },
-        {
-          $set: {
-            rewardProcessedAt: new Date(),
-            rewardPointsAwarded: pointsToAward,
-          },
-        },
-        { new: true },
-      );
-
-      if (rewardMarkedBooking) {
-        await User.findByIdAndUpdate(booking.userId, {
-          $inc: { rewardPoints: pointsToAward },
-          $push: {
-            rewardHistory: {
-              title: `Tich diem tu booking ${booking.bookingNumber}`,
-              points: pointsToAward,
-              type: "earn",
-              createdAt: new Date(),
-            },
-          },
-        });
-        booking.rewardProcessedAt = rewardMarkedBooking.rewardProcessedAt;
-        booking.rewardPointsAwarded = rewardMarkedBooking.rewardPointsAwarded;
-      }
-    }
+    const rewardedPoints = await awardRewardForBookingIfNeeded(booking);
 
     return res.json({
       success: true,
       booking,
       transactionId,
-      rewardedPoints: booking.rewardPointsAwarded || 0,
+      rewardedPoints,
     });
   } catch (err) {
     console.error("[processPayment]", err);
